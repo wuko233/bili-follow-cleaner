@@ -12,6 +12,9 @@ import requests
 ps = 50  # 一次爬取的用户数
 ignore_list = [] # 手动白名单
 INACTIVE_THRESHOLD = 280 # 不活跃天数阈值
+SKIP_NUM = 0 # 跳过最近关注的n位用户
+LAG_START = 5
+LAG_END = 20
 
 
 
@@ -208,7 +211,7 @@ while has_more:
         logging.error(f"请求异常：{str(e)}")
         break
     print(f"已爬取第{pn - 1}页{FollowedUser.user_count} 个关注用户")
-    time.sleep(random.randint(5, 10))
+    time.sleep(random.randint(LAG_START, LAG_END))
 
 print(f"共获取到 {FollowedUser.user_count} 个关注用户：")
 
@@ -218,9 +221,12 @@ current_ts = time.time()
 unfollow_success_count = 0
 unfollow_fail_count = 0
 for i, iuser in enumerate(followed_list, 1):
+    if i < SKIP_NUM:
+        print(f"skip:.{i}")
+        continue
     print(f"{i:3d}. UID: {iuser.mid}\t用户名: {iuser.name}")
     last_active_ts = iuser.get_latest_dynamic(iuser.mid)
-    if last_active_ts == 352:
+    if last_active_ts == -352:
         print("触发风控，已停止程序，请查看日志！")
         logging.error("风控！")
         exit
@@ -229,7 +235,7 @@ for i, iuser in enumerate(followed_list, 1):
         continue
     timeArray = time.localtime(last_active_ts)
     past_days = int((current_ts - last_active_ts) / 86400)
-    print(f"上次发动态时间：{time.strftime("%Y-%m-%d %H:%M:%S", timeArray)}，{past_days}天前。")
+    print(f"上次发动态时间：{time.strftime('%Y-%m-%d %H:%M:%S', timeArray)}，{past_days}天前。")
     if past_days > INACTIVE_THRESHOLD:
         if iuser.mid in ignore_list:
             print(f"用户{iuser.name}({iuser.mid})位于白名单，已忽略。")
@@ -242,6 +248,6 @@ for i, iuser in enumerate(followed_list, 1):
             else: 
                 print(message)
                 unfollow_fail_count += 1
-    time.sleep(random.randint(5,20))
+    time.sleep(random.randint(LAG_START,LAG_END))
 
 print(f"取关成功{unfollow_success_count}个，失败{unfollow_fail_count}个！")
