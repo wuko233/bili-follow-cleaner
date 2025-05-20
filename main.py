@@ -3,7 +3,7 @@ from bilibili_api import login_v2, sync, user
 from pathlib import Path
 import logging
 logging.basicConfig(filename='unfollow.log', level=logging.INFO)
-
+import random
 import time
 import requests
 
@@ -11,7 +11,7 @@ import requests
 # 初始化参数
 ps = 50  # 一次爬取的用户数
 ignore_list = [] # 手动白名单
-INACTIVE_THRESHOLD = 180 # 不活跃天数阈值
+INACTIVE_THRESHOLD = 280 # 不活跃天数阈值
 
 
 
@@ -50,7 +50,9 @@ async def main() -> None:
 async def is_in_special_group():
         try:
             credential = user.Credential(sessdata=cookies["SESSDATA"], bili_jct=cookies["bili_jct"])
-            rel = await user.get_self_friends(credential) # TODO: 当前仅获取前50个，待添加遍历
+            special_sn = 1
+            friends_list = []
+            rel = await user.get_self_friends(credential)
             rel_list = rel.get("list", [])
             if not rel_list:
                 print("无互关用户")
@@ -58,14 +60,28 @@ async def is_in_special_group():
                 for iuser in rel_list:
                     mid = iuser.get("mid")
                     uname = iuser.get("uname")
-                    ignore_list.append(mid)
+                    friends_list.append(mid)
                     print(f"用户{uname}({mid})已互关，已自动添加至白名单。")
-            rel_list = await user.get_self_special_followings(credential) # TODO: 当前仅获取前50个，待添加遍历
-            if not rel_list:
-                print("无特别关注用户")
-            else:
-                for mid in rel_list:
-                    print(f"用户({mid})已特殊关注，已自动添加至白名单。")
+            special_list = []
+            while 1:
+                rel_list = await user.get_self_special_followings(credential, pn=special_sn)
+                if not rel_list:
+                    print("无特别关注用户")
+                    break
+                elif rel_list[0] in special_list:
+                    print("获取特别关注完成")
+                    break
+                else:
+                    for mid in rel_list:
+                        special_list.append(mid)
+                        print(f"用户({mid})已特殊关注，已自动添加至白名单。")
+                special_sn += 1
+
+            unique_id = set()
+            for u in friends_list + special_list:
+                if u not in unique_id:
+                    unique_id.add(u)
+                    ignore_list.append(u)
             return True
         except Exception as e:
             print("出现错误，请查看日志")
@@ -110,6 +126,8 @@ class FollowedUser:
                 print(resp)
                 print("出现错误，请查看日志")
                 logging.error(f"请求失败，错误代码：{resp['code']}，信息：{resp.get('message', '未知错误')}")
+                if resp["code"] == -352:
+                    return -352
                 return None
 
             items = resp["data"]["items"]
@@ -190,7 +208,7 @@ while has_more:
         logging.error(f"请求异常：{str(e)}")
         break
     print(f"已爬取第{pn - 1}页{FollowedUser.user_count} 个关注用户")
-    time.sleep(1)
+    time.sleep(random.randint(5, 10))
 
 print(f"共获取到 {FollowedUser.user_count} 个关注用户：")
 
@@ -202,6 +220,10 @@ unfollow_fail_count = 0
 for i, iuser in enumerate(followed_list, 1):
     print(f"{i:3d}. UID: {iuser.mid}\t用户名: {iuser.name}")
     last_active_ts = iuser.get_latest_dynamic(iuser.mid)
+    if last_active_ts == 352:
+        print("触发风控，已停止程序，请查看日志！")
+        logging.error("风控！")
+        exit
     if last_active_ts == None:
         print(f"用户{iuser.name}({iuser.mid})没发过动态，已忽略。")
         continue
@@ -212,14 +234,14 @@ for i, iuser in enumerate(followed_list, 1):
         if iuser.mid in ignore_list:
             print(f"用户{iuser.name}({iuser.mid})位于白名单，已忽略。")
         else:
-            # status, message = sync(unfollow_user(iuser.mid, iuser.name))
-            status, message = True, f"用户{iuser.name}({iuser.mid})已被虚拟取关"
+            status, message = sync(unfollow_user(iuser.mid, iuser.name))
+            # status, message = True, f"用户{iuser.name}({iuser.mid})已被虚拟取关"
             if status:
                 print(message)
                 unfollow_success_count += 1
             else: 
                 print(message)
                 unfollow_fail_count += 1
-    time.sleep(1)
+    time.sleep(random.randint(5,20))
 
 print(f"取关成功{unfollow_success_count}个，失败{unfollow_fail_count}个！")
