@@ -116,9 +116,12 @@ class FollowedUser:
             if not items:
                 logging.info("该用户暂无动态")
                 return None
-            # TODO:忽略置顶动态
-            latest = items[0]["modules"]
-            publish_time = int(latest["module_author"]["pub_ts"])
+            dynamic1 = items[0]["modules"]["module_author"]["pub_ts"]
+            if len(items) == 1:
+                publish_time = dynamic1
+            else:
+                dynamic2 = items[1]["modules"]["module_author"]["pub_ts"]
+                publish_time = dynamic1 if int(dynamic1) > int(dynamic2) else dynamic2
             self.timestamp = publish_time
             return publish_time
         except Exception as e:
@@ -209,8 +212,8 @@ for i, iuser in enumerate(followed_list, 1):
         if iuser.mid in ignore_list:
             print(f"用户{iuser.name}({iuser.mid})位于白名单，已忽略。")
         else:
-            status, message = sync(unfollow_user(iuser.mid, iuser.name))
-            # status, message = True, f"用户{iuser.name}({iuser.mid})已被虚拟取关"
+            # status, message = sync(unfollow_user(iuser.mid, iuser.name))
+            status, message = True, f"用户{iuser.name}({iuser.mid})已被虚拟取关"
             if status:
                 print(message)
                 unfollow_success_count += 1
