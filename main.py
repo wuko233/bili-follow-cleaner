@@ -16,14 +16,13 @@ INACTIVE_THRESHOLD = 180 # 不活跃天数阈值
 
 
 async def main() -> None:
-    global cookies
+    global cookies, uid
     cookie_file = Path("cookies.json")
     if cookie_file.exists():
         try:
             with open(cookie_file, 'r', encoding='utf-8') as f:
                 cookies = json.load(f)
             try:
-                global uid
                 uid = cookies["DedeUserID"]
                 u = user.User(uid,credential=user.Credential.from_cookies(cookies))
                 await u.get_user_info() 
@@ -43,6 +42,7 @@ async def main() -> None:
             print(status)
         time.sleep(1)     
     cookies = qr.get_credential().get_cookies()
+    uid = cookies["DedeUserID"]
     with open(cookie_file, 'w', encoding='utf-8') as f:
         json.dump(cookies, f, ensure_ascii=False, indent=2)
     print("登录成功，已保存Cookies")
