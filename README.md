@@ -2,7 +2,6 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)  [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)  [![Codacy Badge](https://app.codacy.com/project/badge/Grade/1e02fea405b74a189eaed4bbedce7686)](https://app.codacy.com/gh/wuko233/bili-follow-cleaner/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
-
 ## 📌 项目简介
 
 本脚本用于批量清理B站不活跃的关注用户，通过扫描用户最新动态实现按条件取关。支持白名单保护、自动识别互关用户、请求频率控制等功能。
