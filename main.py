@@ -11,14 +11,15 @@ import requests
 # 初始化参数
 ps = 50  # 一次爬取的用户数
 ignore_list = [] # 手动白名单
-INACTIVE_THRESHOLD = 280 # 不活跃天数阈值
+INACTIVE_THRESHOLD = 365 # 不活跃天数阈值
 SKIP_NUM = 0 # 跳过最近关注的n位用户
 LAG_START = 5
 LAG_END = 20
+AUTO_ADD_IGNORE = True
 
 
 
-async def main() -> None:
+async def login() -> None:
     global cookies, uid
     cookie_file = Path("cookies.json")
     if cookie_file.exists():
@@ -50,8 +51,99 @@ async def main() -> None:
         json.dump(cookies, f, ensure_ascii=False, indent=2)
     print("登录成功，已保存Cookies")
 
+def show_current_parameters():
+    """显示当前参数配置"""
+    print("\n当前参数配置：")
+    print(f"1. 每页爬取数量：{ps}")
+    print(f"2. 白名单用户数：{len(ignore_list)}")
+    print(f"3. 自动添加白名单（互关/特关）：{"是" if AUTO_ADD_IGNORE else "否"}")
+    print(f"4. 不活跃天数阈值：{INACTIVE_THRESHOLD}天")
+    print(f"5. 跳过最近关注数：{SKIP_NUM}")
+    print(f"6. 请求延迟区间：{LAG_START}-{LAG_END}秒")
+    
+def set_parameter():
+    """交互式参数配置入口"""
+    global ps, INACTIVE_THRESHOLD, SKIP_NUM, LAG_START, LAG_END, AUTO_ADD_IGNORE
+    
+    while True:
+        show_current_parameters()
+        msg = input("\n是否要修改参数？[y/n]：").strip().lower()
+        
+        if msg in {'n', 'no'}:
+            return
+        elif msg in {'y', 'yes'}:
+            break
+        else:
+            print("输入无效，请输入 y(yes) 或 n(no)")
+            continue
+
+    # 配置每页数量
+    while True:
+        try:
+            new_ps = int(input(f"\n请输入每页爬取数量（当前：{ps}）："))
+            if 1 <= new_ps <= 50:
+                ps = new_ps
+                break
+            print("请输入1-50之间的整数")
+        except ValueError:
+            print("请输入有效的数字")
+
+    # 配置白名单
+    if input("\n是否需要修改白名单？[y/n]：").lower() == 'y':
+        print("\n当前白名单用户：", ignore_list)
+        try:
+            new_list = list(map(int, 
+                input("请输入要添加的UID（多个用空格分隔，留空取消）：").split()))
+            ignore_list.extend(new_list)
+            print(f"已添加{len(new_list)}个白名单用户")
+        except ValueError:
+            print("输入包含无效UID，已取消修改")
+
+    # 配置不活跃阈值
+    while True:
+        try:
+            new_threshold = int(input(f"\n请输入不活跃天数阈值（当前：{INACTIVE_THRESHOLD}）："))
+            if new_threshold >= 0:
+                INACTIVE_THRESHOLD = new_threshold
+                break
+            print("天数不能为负数")
+        except ValueError:
+            print("请输入有效的整数")
+
+    # 配置跳过数量
+    while True:
+        try:
+            new_skip = int(input(f"\n请输入要跳过的最近关注数（当前：{SKIP_NUM}）："))
+            if new_skip >= 0:
+                SKIP_NUM = new_skip
+                break
+            print("请输入非负数")
+        except ValueError:
+            print("请输入有效的整数")
+
+    # 配置延迟区间
+    while True:
+        print(f"当前随机请求延迟区间：{LAG_START}-{LAG_END}秒")
+        print("注意：延迟过小可能触发-352风控。默认延迟基本不会触发风控（就是慢点）")
+        if input("\n是否需要修改延迟？[y/n]：").lower() == 'y':
+            try:
+                
+                new_start = int(input(f"\n请输入最小延迟秒数（当前：{LAG_START}）："))
+                new_end = int(input("请输入最大延迟秒数（当前：{}）：".format(LAG_END)))
+                if 0 <= new_start <= new_end:
+                    LAG_START, LAG_END = new_start, new_end
+                    break
+                print("延迟范围无效（最小 <= 最大）")
+            except ValueError:
+                print("请输入有效的整数")
+
+    print("\n参数更新完成！")
+    show_current_parameters()
+    
+
 async def is_in_special_group():
         try:
+            print("正在自动添加白名单")
             credential = user.Credential(sessdata=cookies["SESSDATA"], bili_jct=cookies["bili_jct"])
             special_sn = 1
             friends_list = []
@@ -85,19 +177,25 @@ async def is_in_special_group():
                 if u not in unique_id:
                     unique_id.add(u)
                     ignore_list.append(u)
-            return True
+            print("已完成自动添加白名单")
+            return
         except Exception as e:
             print("出现错误，请查看日志")
             print(str(e))
-            logging.error(f"检查互关状态失败：{str(e)}")
+            logging.error(f"添加白名单失败：{str(e)}")
+            exit
             return False
 
 if __name__ == '__main__':
-    sync(main())
+    sync(login())
+    set_parameter()
+    if AUTO_ADD_IGNORE :
+        success = sync(is_in_special_group())
+    print("3s后开始执行取关脚本, CTRL+C终止程序：")
+    for i in range(3, 0):
+        print(i)
+        time.sleep(1)
 
-    print("正在自动添加白名单")
-    success = sync(is_in_special_group())
-    print("已完成自动添加白名单" if success else "白名单添加失败")
 
 class FollowedUser:
     user_count = 0
@@ -214,6 +312,7 @@ while has_more:
     time.sleep(random.randint(LAG_START, LAG_END))
 
 print(f"共获取到 {FollowedUser.user_count} 个关注用户：")
+logging.info(f"共获取到 {FollowedUser.user_count} 个关注用户")
 
 
 
@@ -251,3 +350,4 @@ for i, iuser in enumerate(followed_list, 1):
     time.sleep(random.randint(LAG_START,LAG_END))
 
 print(f"取关成功{unfollow_success_count}个，失败{unfollow_fail_count}个！")
+logging.info(f"取关成功{unfollow_success_count}个，失败{unfollow_fail_count}个！")
