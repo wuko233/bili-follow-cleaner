@@ -64,7 +64,7 @@ python main.py
 - 手动修改配置：
   ```python
   # 直接编辑脚本全局变量
-  ignore_list = [123456, 789012]  # 添加永久白名单UID
+  ignore_list = [114514, 1919810]  # 添加永久白名单UID
   ```
 
 - 重新登录：
