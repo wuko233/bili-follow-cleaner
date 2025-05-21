@@ -1,11 +1,11 @@
 import json
-from bilibili_api import login_v2, sync, user
-from pathlib import Path
 import logging
-logging.basicConfig(filename='unfollow.log', level=logging.INFO)
 import random
 import time
+from pathlib import Path
+
 import requests
+from bilibili_api import login_v2, sync, user
 
 
 # 初始化参数
@@ -16,7 +16,7 @@ SKIP_NUM = 0 # 跳过最近关注的n位用户
 LAG_START = 5
 LAG_END = 20
 AUTO_ADD_IGNORE = True
-
+logging.basicConfig(filename='unfollow.log', level=logging.INFO)
 
 
 async def login() -> None:
@@ -56,7 +56,7 @@ def show_current_parameters():
     print("\n当前参数配置：")
     print(f"1. 每页爬取数量：{ps}")
     print(f"2. 白名单用户数：{len(ignore_list)}")
-    print(f"3. 自动添加白名单（互关/特关）：{"是" if AUTO_ADD_IGNORE else "否"}")
+    print(f"3. 自动添加白名单（互关/特关）：{'是' if AUTO_ADD_IGNORE else '否'}")
     print(f"4. 不活跃天数阈值：{INACTIVE_THRESHOLD}天")
     print(f"5. 跳过最近关注数：{SKIP_NUM}")
     print(f"6. 请求延迟区间：{LAG_START}-{LAG_END}秒")
@@ -142,49 +142,49 @@ def set_parameter():
     
 
 async def is_in_special_group():
-        try:
-            print("正在自动添加白名单")
-            credential = user.Credential(sessdata=cookies["SESSDATA"], bili_jct=cookies["bili_jct"])
-            special_sn = 1
-            friends_list = []
-            rel = await user.get_self_friends(credential)
-            rel_list = rel.get("list", [])
+    try:
+        print("正在自动添加白名单")
+        credential = user.Credential(sessdata=cookies["SESSDATA"], bili_jct=cookies["bili_jct"])
+        special_sn = 1
+        friends_list = []
+        rel = await user.get_self_friends(credential)
+        rel_list = rel.get("list", [])
+        if not rel_list:
+            print("无互关用户")
+        else:
+            for iuser in rel_list:
+                mid = iuser.get("mid")
+                uname = iuser.get("uname")
+                friends_list.append(mid)
+                print(f"用户{uname}({mid})已互关，已自动添加至白名单。")
+        special_list = []
+        while 1:
+            rel_list = await user.get_self_special_followings(credential, pn=special_sn)
             if not rel_list:
-                print("无互关用户")
+                print("无特别关注用户")
+                break
+            elif rel_list[0] in special_list:
+                print("获取特别关注完成")
+                break
             else:
-                for iuser in rel_list:
-                    mid = iuser.get("mid")
-                    uname = iuser.get("uname")
-                    friends_list.append(mid)
-                    print(f"用户{uname}({mid})已互关，已自动添加至白名单。")
-            special_list = []
-            while 1:
-                rel_list = await user.get_self_special_followings(credential, pn=special_sn)
-                if not rel_list:
-                    print("无特别关注用户")
-                    break
-                elif rel_list[0] in special_list:
-                    print("获取特别关注完成")
-                    break
-                else:
-                    for mid in rel_list:
-                        special_list.append(mid)
-                        print(f"用户({mid})已特殊关注，已自动添加至白名单。")
-                special_sn += 1
+                for mid in rel_list:
+                    special_list.append(mid)
+                    print(f"用户({mid})已特殊关注，已自动添加至白名单。")
+            special_sn += 1
 
-            unique_id = set()
-            for u in friends_list + special_list:
-                if u not in unique_id:
-                    unique_id.add(u)
-                    ignore_list.append(u)
-            print("已完成自动添加白名单")
-            return
-        except Exception as e:
-            print("出现错误，请查看日志")
-            print(str(e))
-            logging.error(f"添加白名单失败：{str(e)}")
-            exit
-            return False
+        unique_id = set()
+        for u in friends_list + special_list:
+            if u not in unique_id:
+                unique_id.add(u)
+                ignore_list.append(u)
+        print("已完成自动添加白名单")
+        return
+    except Exception as e:
+        print("出现错误，请查看日志")
+        print(str(e))
+        logging.error(f"添加白名单失败：{str(e)}")
+        exit
+        return False
 
 if __name__ == '__main__':
     sync(login())
@@ -329,7 +329,7 @@ for i, iuser in enumerate(followed_list, 1):
         print("触发风控，已停止程序，请查看日志！")
         logging.error("风控！")
         exit
-    if last_active_ts == None:
+    if last_active_ts is None:
         print(f"用户{iuser.name}({iuser.mid})没发过动态，已忽略。")
         continue
     timeArray = time.localtime(last_active_ts)
