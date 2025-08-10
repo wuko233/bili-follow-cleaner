@@ -16,6 +16,7 @@ class Config:
         self.ignore_list = [] # 手动白名单
         self.INACTIVE_THRESHOLD = 365 # 不活跃天数阈值
         self.SKIP_NUM = 0 # 跳过最近关注的n位用户
+        self.REMOVE_EMPTY_DYNAMIC = False
         self.LAG_START = 5
         self.LAG_END = 20
         self.AUTO_ADD_IGNORE = True
@@ -71,12 +72,14 @@ def show_current_parameters():
     print(f"3. 自动添加白名单（互关/特关）：{'是' if config.AUTO_ADD_IGNORE else '否'}")
     print(f"4. 不活跃天数阈值：{config.INACTIVE_THRESHOLD}天")
     print(f"5. 跳过最近关注数：{config.SKIP_NUM}")
-    print(f"6. 请求延迟区间：{config.LAG_START}-{config.LAG_END}秒")
+    print(f"6. 是否删除无动态用户：{'是' if config.REMOVE_EMPTY_DYNAMIC else '否'}")
+    print(f"7. 请求延迟区间：{config.LAG_START}-{config.LAG_END}秒")
 
 def set_parameter():
     """交互式参数配置入口"""
     while True:
         show_current_parameters()
+        print("!!!操作不可逆，强烈建议检查一遍!!!")
         msg = input("\n是否要修改参数？[y/n]：").strip().lower()
         
         if msg in {'n', 'no'}:
@@ -129,6 +132,21 @@ def set_parameter():
             print("请输入非负数")
         except ValueError:
             print("请输入有效的整数")
+
+    # 配置是否移除空动态用户
+    while True:
+        print(f"!!!移除无动态用户会直接取关没发过动态的用户!!!\n默认禁用\n当前状态：{'是' if config.REMOVE_EMPTY_DYNAMIC else '否'}")
+        msg = input("\n是否要移除无动态用户？[y/n]：").strip().lower()
+        
+        if msg in {'n', 'no'}:
+            config.REMOVE_EMPTY_DYNAMIC = False
+            break
+        elif msg in {'y', 'yes'}:
+            config.REMOVE_EMPTY_DYNAMIC = True
+            break
+        else:
+            print("输入无效，请输入 y(yes) 或 n(no)")
+            continue
 
     # 配置延迟区间
     while True:
@@ -322,12 +340,17 @@ def handle_follow_list(followed_list):
             logging.error("风控！")
             exit
         if last_active_ts is None:
-            print(f"用户{iuser.name}({iuser.mid})没发过动态，已忽略。")
-            continue
-        timeArray = time.localtime(last_active_ts)
-        past_days = int((current_ts - last_active_ts) / 86400)
-        print(f"上次发动态时间：{time.strftime('%Y-%m-%d %H:%M:%S', timeArray)}，{past_days}天前。")
-        if past_days > config.INACTIVE_THRESHOLD:
+            if config.REMOVE_EMPTY_DYNAMIC:
+                print(f"用户{iuser.name}({iuser.mid})没发过动态。")
+                past_days = -1
+            else:
+                print(f"用户{iuser.name}({iuser.mid})没发过动态，已忽略。")
+                continue
+        else:
+            timeArray = time.localtime(last_active_ts)
+            past_days = int((current_ts - last_active_ts) / 86400)
+            print(f"上次发动态时间：{time.strftime('%Y-%m-%d %H:%M:%S', timeArray)}，{past_days}天前。")
+        if past_days > config.INACTIVE_THRESHOLD or past_days == -1:
             if iuser.mid in config.ignore_list:
                 print(f"用户{iuser.name}({iuser.mid})位于白名单，已忽略。")
             else:
@@ -364,4 +387,3 @@ if __name__ == '__main__':
         logging.error(e)
     used_time = timedelta(seconds=time.time()-start_ts)
     print(f"总耗时：{used_time}")
-    

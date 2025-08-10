@@ -12,6 +12,8 @@
 
 本项目还依赖以下第三方库：
 
+`httpx` `requests`
+
 ```bash
 pip install httpx requests
 ```
@@ -39,6 +41,7 @@ python main.py
 | SKIP_NUM             | 0      | 跳过最近关注的用户数                                                |
 | LAG_START-LAG_END    | 5-20   | 随机请求延迟区间(秒) 防止风控                                        |
 | AUTO_ADD_IGNORE      | True   | 自动添加互关/特别关注用户到白名单                                   |
+| REMOVE_EMPTY_DYNAMIC | False  | 移除无动态用户                                   |
 
 ## 🖥 使用流程
 
