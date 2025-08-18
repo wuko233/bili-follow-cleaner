@@ -1,6 +1,6 @@
 # bili-follow-cleaner
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)  [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)  [![Codacy Badge](https://app.codacy.com/project/badge/Grade/1e02fea405b74a189eaed4bbedce7686)](https://app.codacy.com/gh/wuko233/bili-follow-cleaner/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)    [![Release](https://img.shields.io/github/v/release/wuko233/bili-follow-cleaner)](https://github.com/wuko233/bili-follow-cleaner/releases) [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)  [![Codacy Badge](https://app.codacy.com/project/badge/Grade/1e02fea405b74a189eaed4bbedce7686)](https://app.codacy.com/gh/wuko233/bili-follow-cleaner/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
 ## 📌 项目简介
 
