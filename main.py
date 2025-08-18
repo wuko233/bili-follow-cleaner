@@ -50,9 +50,19 @@ async def login() -> None:
         except (json.JSONDecodeError, KeyError) as e:
             print(f"cookies文件损坏：{str(e)}")
     print("无有效cookies，开始扫码登录...")
+
     qr = login_v2.QrCodeLogin(platform=login_v2.QrCodeLoginChannel.WEB) # 生成二维码登录实例，平台选择网页端
     await qr.generate_qrcode()                                          # 生成二维码
+    pic = qr.get_qrcode_picture()
+    pic.to_file("./qr.jpg")
     print(qr.get_qrcode_terminal())                                     # 生成终端二维码文本，打印
+    print("如以上内容为乱码，请手动打开目录中qr.jpg扫描")
+    # print("或打开以下链接扫描二维码：")
+    # print(qr._QrCodeLogin__qr_link)
+
+
+
+
     while not qr.has_done():                                            # 在完成扫描前轮询
         status = await qr.check_state()
         if (str(status) != "QrCodeLoginEvents.SCAN"):
