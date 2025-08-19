@@ -17,6 +17,7 @@ class Config:
         self.INACTIVE_THRESHOLD = 365 # 不活跃天数阈值
         self.SKIP_NUM = 0 # 跳过最近关注的n位用户
         self.REMOVE_EMPTY_DYNAMIC = False
+        self.REMOVE_DELETED_USER = False
         self.LAG_START = 5
         self.LAG_END = 20
         self.AUTO_ADD_IGNORE = True
@@ -31,24 +32,37 @@ class Config:
 
 logging.basicConfig(filename='unfollow.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+class APIExpection:
+    """API异常"""
+    def __init__(self, message, status_code):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(f"状态码 {status_code}: {message}")
 
 async def login() -> None:
     cookie_file = Path("cookies.json")
+
     if cookie_file.exists():
+
         try:
             with open(cookie_file, 'r', encoding='utf-8') as f:
                 config.set_user_cookies(json.load(f))
+            
             try:
                 uid = config.uid
                 cookies = config.cookies
-                u = user.User(uid,credential=user.Credential.from_cookies(cookies))
-                await u.get_user_info()
-                print("检测到有效cookies，自动登录成功")
+                credential = user.Credential.from_cookies(cookies)
+                u = user.User(uid, credential)
+                await user.get_self_coins(credential) # 用于验证cookies状态
+                info = await u.get_user_info()
+                print("检测到有效cookies，自动登录成功！\n")
+                print(f"当前账号：\n名称：{info["name"]}\nUID:{info["mid"]}")
                 return True, cookies
             except Exception as e:
                 print(f"cookies已失效：{str(e)}")
         except (json.JSONDecodeError, KeyError) as e:
             print(f"cookies文件损坏：{str(e)}")
+
     print("无有效cookies，开始扫码登录...")
 
     qr = login_v2.QrCodeLogin(platform=login_v2.QrCodeLoginChannel.WEB) # 生成二维码登录实例，平台选择网页端
@@ -56,12 +70,8 @@ async def login() -> None:
     pic = qr.get_qrcode_picture()
     pic.to_file("./qr.jpg")
     print(qr.get_qrcode_terminal())                                     # 生成终端二维码文本，打印
+    print("Ctrl加+/-可缩放终端大小\n")
     print("如以上内容为乱码，请手动打开目录中qr.jpg扫描")
-    # print("或打开以下链接扫描二维码：")
-    # print(qr._QrCodeLogin__qr_link)
-
-
-
 
     while not qr.has_done():                                            # 在完成扫描前轮询
         status = await qr.check_state()
@@ -83,7 +93,8 @@ def show_current_parameters():
     print(f"4. 不活跃天数阈值：{config.INACTIVE_THRESHOLD}天")
     print(f"5. 跳过最近关注数：{config.SKIP_NUM}")
     print(f"6. 是否删除无动态用户：{'是' if config.REMOVE_EMPTY_DYNAMIC else '否'}")
-    print(f"7. 请求延迟区间：{config.LAG_START}-{config.LAG_END}秒")
+    print(f"7. 是否直接删除已注销用户：{'是' if config.REMOVE_DELETED_USER else '否'}")
+    print(f"8. 请求延迟区间：{config.LAG_START}-{config.LAG_END}秒")
 
 def set_parameter():
     """交互式参数配置入口"""
@@ -121,6 +132,21 @@ def set_parameter():
         except ValueError:
             print("输入包含无效UID，已取消修改")
 
+    # 配置是否自动添加白名单
+    while True:
+        print(f"\n!!!自动添加白名单!!!\n默认启用\n当前状态：{'是' if config.AUTO_ADD_IGNORE else '否'}")
+        msg = input("是否要自动添加白名单？[y/n]：").strip().lower()
+        
+        if msg in {'n', 'no'}:
+            config.AUTO_ADD_IGNORE = False
+            break
+        elif msg in {'y', 'yes'}:
+            config.AUTO_ADD_IGNORE = True
+            break
+        else:
+            print("输入无效，请输入 y(yes) 或 n(no)")
+            continue
+
     # 配置不活跃阈值
     while True:
         try:
@@ -145,8 +171,8 @@ def set_parameter():
 
     # 配置是否移除空动态用户
     while True:
-        print(f"!!!移除无动态用户会直接取关没发过动态的用户!!!\n默认禁用\n当前状态：{'是' if config.REMOVE_EMPTY_DYNAMIC else '否'}")
-        msg = input("\n是否要移除无动态用户？[y/n]：").strip().lower()
+        print(f"\n!!!移除无动态用户会直接取关没发过动态的用户!!!\n默认禁用\n当前状态：{'是' if config.REMOVE_EMPTY_DYNAMIC else '否'}")
+        msg = input("是否要移除无动态用户？[y/n]：").strip().lower()
         
         if msg in {'n', 'no'}:
             config.REMOVE_EMPTY_DYNAMIC = False
@@ -158,11 +184,26 @@ def set_parameter():
             print("输入无效，请输入 y(yes) 或 n(no)")
             continue
 
+    # 配置是否移除已注销用户
+    while True:
+        print(f"\n!!!移除已注销用户会直接取关名为“账号已注销”的用户且无法找回!!!\n默认禁用\n当前状态：{'是' if config.REMOVE_DELETED_USER else '否'}")
+        msg = input("是否要移除已注销用户？[y/n]：").strip().lower()
+        
+        if msg in {'n', 'no'}:
+            config.REMOVE_DELETED_USER = False
+            break
+        elif msg in {'y', 'yes'}:
+            config.REMOVE_DELETED_USER = True
+            break
+        else:
+            print("输入无效，请输入 y(yes) 或 n(no)")
+            continue
+
     # 配置延迟区间
     while True:
-        print(f"当前随机请求延迟区间：{config.LAG_START}-{config.LAG_END}秒")
+        print(f"\n当前随机请求延迟区间：{config.LAG_START}-{config.LAG_END}秒")
         print("注意：延迟过小可能触发-352风控。默认延迟基本不会触发风控（就是慢点）")
-        if input("\n是否需要修改延迟？[y/n]：").lower() == 'y':
+        if input("是否需要修改延迟？[y/n]：").lower() == 'y':
             try:
                 
                 new_start = int(input(f"\n请输入最小延迟秒数（当前：{config.LAG_START}）："))
@@ -182,12 +223,15 @@ def set_parameter():
 
 async def is_in_special_group():
     try:
-        print("正在自动添加白名单")
+        print("\n正在自动添加白名单")
         credential = user.Credential(sessdata=config.cookies["SESSDATA"], bili_jct=config.cookies["bili_jct"])
+        
         special_sn = 1
         friends_list = []
         rel = await user.get_self_friends(credential)
+
         rel_list = rel.get("list", [])
+
         if not rel_list:
             print("无互关用户")
         else:
@@ -197,6 +241,7 @@ async def is_in_special_group():
                 friends_list.append(mid)
                 print(f"用户{uname}({mid})已互关，已自动添加至白名单。")
         special_list = []
+
         while 1:
             rel_list = await user.get_self_special_followings(credential, pn=special_sn)
             if not rel_list:
@@ -216,13 +261,14 @@ async def is_in_special_group():
             if u not in unique_id:
                 unique_id.add(u)
                 config.ignore_list.append(u)
-        print("已完成自动添加白名单")
+        print("已完成自动添加白名单\n")
         return
+    
     except Exception as e:
-        print("出现错误，请查看日志")
+        print("出现错误:")
         print(str(e))
         logging.error(f"添加白名单失败：{str(e)}")
-        return False
+        raise
 
 class FollowedUser:
     user_count = 0
@@ -252,10 +298,10 @@ class FollowedUser:
 
             if resp["code"] != 0:
                 print(resp)
-                print("出现错误，请查看日志")
+                print(f"请求失败，错误代码：{resp['code']}，信息：{resp.get('message', '未知错误')}")
                 logging.error(f"请求失败，错误代码：{resp['code']}，信息：{resp.get('message', '未知错误')}")
                 if resp["code"] == -352:
-                    return -352
+                    raise APIExpection("账号可能被风控限制，请稍后重试", -352)
                 return None
 
             items = resp["data"]["items"]
@@ -271,7 +317,7 @@ class FollowedUser:
             self.timestamp = publish_time
             return publish_time
         except Exception as e:
-            print("出现错误，请查看日志")
+            print(f"请求异常：{str(e)}")
             logging.error(f"请求异常：{str(e)}")
         return None
 
@@ -279,11 +325,12 @@ async def unfollow_user(uid, name = None):
     try:
         credential = user.Credential(sessdata=config.cookies["SESSDATA"], bili_jct=config.cookies["bili_jct"])
         u = user.User(uid=uid, credential=credential)
-        logging.info(f"Removing {name}, uid:{uid}.")
+        logging.info(f"尝试取关 {name} uid:{uid}.")
         await u.modify_relation(relation=user.RelationType.UNSUBSCRIBE)
-        return True, f"取关成功：{uid}"
+        logging.info(f"取关成功：{uid}")
+        return f"取关成功：{uid}"
     except Exception as e:
-        return False, f"取关失败：{str(e)}"
+        raise
 
 def get_follow_list():
     pn = 1
@@ -300,9 +347,9 @@ def get_follow_list():
             resp = response.json()
             
             if resp["code"] != 0:
-                print("出现错误，请查看日志")
+                print(f"请求失败，错误代码：{resp['code']}，信息：{resp.get('message', '未知错误')}")
                 logging.error(f"请求失败，错误代码：{resp['code']}，信息：{resp.get('message', '未知错误')}")
-                break
+                raise APIExpection("非零返回", -1)
                 
             data = resp.get("data", {})
             user_list = data.get("list", [])
@@ -339,20 +386,41 @@ def handle_follow_list(followed_list):
     current_ts = time.time()
     unfollow_success_count = 0
     unfollow_fail_count = 0
+
     for i, iuser in enumerate(followed_list, 1):
-        if i < config.SKIP_NUM:
-            print(f"skip:{i}.\t 用户名：{iuser.name}\tUID：{iuser.mid}")
+
+        # 跳过前SKIP_NUM个关注用户
+        if i <= config.SKIP_NUM:
+            print(f"跳过用户:{i}.\t 用户名：{iuser.name}\tUID：{iuser.mid}")
+            logging.info(f"跳过用户:{i}.\t 用户名：{iuser.name}\tUID：{iuser.mid}")
             continue
+
+        # 开始处理当前用户
         print(f"{i:3d}. UID: {iuser.mid}\t用户名: {iuser.name}")
+        logging.info(f"{i:3d}. UID: {iuser.mid}\t用户名: {iuser.name}")
+
+        if iuser.mid in config.ignore_list:
+            print(f"用户{iuser.name}({iuser.mid})位于白名单，已忽略。")
+            logging.info(f"用户{iuser.name}({iuser.mid})位于白名单，已忽略。")
+            continue
+        
+        will_delete = False
+
+        if iuser.name == "账号已注销" and config.REMOVE_DELETED_USER and not will_delete:
+            print(f"用户{iuser.name}({iuser.mid})已注销，执行取关操作。")
+            logging.info(f"用户{iuser.name}({iuser.mid})已注销，执行取关操作。")
+            will_delete = True
+
         last_active_ts = iuser.get_latest_dynamic(iuser.mid)
         if last_active_ts == -352:
             print("触发风控，已停止程序，请查看日志！")
             logging.error("风控！")
             exit
-        if last_active_ts is None:
+
+        if last_active_ts is None and not will_delete:
             if config.REMOVE_EMPTY_DYNAMIC:
-                print(f"用户{iuser.name}({iuser.mid})没发过动态。")
-                past_days = -1
+                print(f"用户{iuser.name}({iuser.mid})没发过动态，执行取关操作。")
+                will_delete = True
             else:
                 print(f"用户{iuser.name}({iuser.mid})没发过动态，已忽略。")
                 continue
@@ -360,38 +428,49 @@ def handle_follow_list(followed_list):
             timeArray = time.localtime(last_active_ts)
             past_days = int((current_ts - last_active_ts) / 86400)
             print(f"上次发动态时间：{time.strftime('%Y-%m-%d %H:%M:%S', timeArray)}，{past_days}天前。")
-        if past_days > config.INACTIVE_THRESHOLD or past_days == -1:
-            if iuser.mid in config.ignore_list:
-                print(f"用户{iuser.name}({iuser.mid})位于白名单，已忽略。")
-            else:
-                status, message = sync(unfollow_user(iuser.mid, iuser.name))
-                # status, message = True, f"用户{iuser.name}({iuser.mid})已被虚拟取关"
-                if status:
-                    print(message)
-                    unfollow_success_count += 1
-                else: 
-                    print(message)
-                    unfollow_fail_count += 1
+
+            if past_days > config.INACTIVE_THRESHOLD:
+                print(f"超过设定天数（{config.INACTIVE_THRESHOLD}），执行取关操作")
+                will_delete = True
+        
+        if will_delete:
+            try:
+                message = sync(unfollow_user(iuser.mid, iuser.name))
+                # message = f"[测试]用户{iuser.name}({iuser.mid})已被取关"
+                print(message)
+                logging.info(f"用户{iuser.name}({iuser.mid})已被取关")
+                unfollow_success_count += 1
+            except Exception as e:
+                print(f"取关 {iuser.name}（{iuser.mid}） 失败：{str(e)}")
+                logging.error(f"取关 {iuser.name}（{iuser.mid}） 失败：{str(e)}")
+                unfollow_fail_count += 1
+    
         time.sleep(random.randint(config.LAG_START,config.LAG_END))
+
     print(f"取关成功{unfollow_success_count}个，失败{unfollow_fail_count}个！")
     logging.info(f"取关成功{unfollow_success_count}个，失败{unfollow_fail_count}个！")
 
 if __name__ == '__main__':
-    start_ts = time.time()
-    config = Config()
-    sync(login())
-    set_parameter()
-    if config.AUTO_ADD_IGNORE :
-        success = sync(is_in_special_group())
-    print("3s后开始执行取关脚本, CTRL+C终止程序：")
-    for i in range(3, 0, -1):
-        print(f"倒计时:{i}")
-        time.sleep(1)
+
     try:
+        start_ts = time.time()
+        config = Config()
+        sync(login())
+        set_parameter()
+        print("3s后开始执行取关脚本, CTRL+C终止程序：")
+        for i in range(3, 0, -1):
+            print(f"倒计时:{i}")
+            time.sleep(1)
+        if config.AUTO_ADD_IGNORE :
+            sync(is_in_special_group())
         followed_list = get_follow_list()
+        print("开始处理...\n")
         handle_follow_list(followed_list)
     except KeyboardInterrupt as e:
         print("已手动终止程序。")
+    except APIExpection as e:
+        print(f"程序调用API异常返回：{e.message}")
+        logging.error(e)
     except Exception as e:
         print("程序异常终止，请查看日志。")
         logging.error(e)
