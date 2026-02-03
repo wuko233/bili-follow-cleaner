@@ -16,6 +16,7 @@ class Config:
         self.ignore_list = [] # 手动白名单
         self.INACTIVE_THRESHOLD = 365 # 不活跃天数阈值
         self.SKIP_NUM = 0 # 跳过最近关注的n位用户
+        self.DETECT_TYPE = 0 # 0 = 动态， 1 = 投稿（视频/音频/专栏）
         self.REMOVE_EMPTY_DYNAMIC = False
         self.REMOVE_DELETED_USER = False
         self.LAG_START = 5
@@ -87,6 +88,7 @@ async def login() -> None:
 def show_current_parameters():
     """显示当前参数配置"""
     print("\n当前参数配置：")
+    print(f"0. 爬取类型： {"动态" if config.DETECT_TYPE == 0 else "视频"}")
     print(f"1. 每页爬取数量：{config.ps}")
     print(f"2. 白名单用户数：{len(config.ignore_list)}")
     print(f"3. 自动添加白名单（互关/特关）：{'是' if config.AUTO_ADD_IGNORE else '否'}")
@@ -109,6 +111,23 @@ def set_parameter():
             break
         else:
             print("输入无效，请输入 y(yes) 或 n(no)")
+            continue
+
+    # 配置爬取种类
+    while True:
+        print("请选择检测类型：\n最新动态 请输入0\n最新投稿（视频/音频/专栏）请输入1")
+        msg = input("\n请选择检测类型：").strip().lower()
+        
+        if msg == "0":
+            config.DETECT_TYPE = 0
+            print("已选择最新动态。\n")
+            break
+        elif msg == "1":
+            config.DETECT_TYPE = 1
+            print("已选择最新投稿。\n")
+            break
+        else:
+            print("输入无效，请输入 0 或 1")
             continue
 
     # 配置每页数量
@@ -320,6 +339,85 @@ class FollowedUser:
             print(f"请求异常：{str(e)}")
             logging.error(f"请求异常：{str(e)}")
         return None
+    
+    async def get_latest_video(self):
+        """异步获取用户最新视频"""
+        try:
+            credential = user.Credential(sessdata=config.cookies["SESSDATA"], 
+                                        bili_jct=config.cookies["bili_jct"])
+            u = user.User(self.mid, credential=credential)
+            
+            videos = await u.get_videos()
+            videos_list = videos['list'].get('vlist', [])
+            latest_video = videos_list[0]
+            return latest_video
+        except Exception as e:
+            logging.error(f"获取用户视频异常：{str(e)}")
+            return
+    
+    async def get_latest_audios(self):
+        """异步获取用户最新音频"""
+        try:
+            credential = user.Credential(sessdata=config.cookies["SESSDATA"], 
+                                        bili_jct=config.cookies["bili_jct"])
+            u = user.User(self.mid, credential=credential)
+            
+            audios = await u.get_audios()
+            audios_list = audios.get('data', [])
+            latest_audio = audios_list[0]
+            return latest_audio
+        except Exception as e:
+            logging.error(f"获取用户音频异常：{str(e)}")
+            return
+        
+    async def get_latest_articles(self):
+        """异步获取用户最新专栏"""
+        try:
+            credential = user.Credential(sessdata=config.cookies["SESSDATA"], 
+                                        bili_jct=config.cookies["bili_jct"])
+            u = user.User(self.mid, credential=credential)
+            
+            articles = await u.get_articles()
+            articles_list = articles.get('articles', [])
+            latest_article = articles_list[0]
+            return latest_article
+        except Exception as e:
+            logging.error(f"获取用户专栏异常：{str(e)}")
+            return
+    
+    async def get_latest_post_time(self):
+        """异步获取用户最新投稿（视频/音频/专栏）时间戳"""
+        try:
+            latest_video = await self.get_latest_video()
+            latest_audio = await self.get_latest_audios()
+            latest_article = await self.get_latest_articles()
+
+            timestamps = []
+            
+            # 处理视频时间戳
+            if latest_video and 'created' in latest_video:
+                video_time = latest_video['created']
+                timestamps.append(video_time)
+            
+            # 处理音频时间戳
+            if latest_audio and 'ctime' in latest_audio:
+                audio_time = latest_audio['ctime'] / 1000  # 转换为秒
+                timestamps.append(audio_time)
+            
+            # 处理专栏时间戳
+            if latest_article and 'publish_time' in latest_article:
+                article_time = latest_article['publish_time']
+                timestamps.append(article_time)
+            
+            if not timestamps:
+                return
+            
+            latest_timestamp = max(timestamps)
+            
+            return latest_timestamp     
+        except Exception as e:
+            logging.error(f"获取用户最新投稿异常：{str(e)}")
+            return
 
 async def unfollow_user(uid, name = None):
     try:
@@ -382,12 +480,14 @@ def get_follow_list():
     logging.info(f"共获取到 {FollowedUser.user_count} 个关注用户")
     return followed_list
 
-def handle_follow_list(followed_list):
+async def handle_follow_list(followed_list):
     current_ts = time.time()
     unfollow_success_count = 0
     unfollow_fail_count = 0
 
     for i, iuser in enumerate(followed_list, 1):
+
+        handle_user = FollowedUser(iuser.mid, iuser.name)
 
         # 跳过前SKIP_NUM个关注用户
         if i <= config.SKIP_NUM:
@@ -411,27 +511,47 @@ def handle_follow_list(followed_list):
             logging.info(f"用户{iuser.name}({iuser.mid})已注销，执行取关操作。")
             will_delete = True
 
-        last_active_ts = iuser.get_latest_dynamic(iuser.mid)
-        if last_active_ts == -352:
-            print("触发风控，已停止程序，请查看日志！")
-            logging.error("风控！")
-            exit
+        if config.DETECT_TYPE == 0 and not will_delete:
+            # 通过动态检测不活跃
+            last_active_ts = iuser.get_latest_dynamic(iuser.mid)
+            if last_active_ts == -352:
+                print("触发风控，已停止程序，请查看日志！")
+                logging.error("风控！")
+                exit
 
-        if last_active_ts is None and not will_delete:
-            if config.REMOVE_EMPTY_DYNAMIC:
-                print(f"用户{iuser.name}({iuser.mid})没发过动态，执行取关操作。")
-                will_delete = True
+            if last_active_ts is None and not will_delete:
+                if config.REMOVE_EMPTY_DYNAMIC:
+                    print(f"用户{iuser.name}({iuser.mid})没发过动态，执行取关操作。")
+                    will_delete = True
+                else:
+                    print(f"用户{iuser.name}({iuser.mid})没发过动态，已忽略。")
+                    continue
             else:
-                print(f"用户{iuser.name}({iuser.mid})没发过动态，已忽略。")
-                continue
-        else:
-            timeArray = time.localtime(last_active_ts)
-            past_days = int((current_ts - last_active_ts) / 86400)
-            print(f"上次发动态时间：{time.strftime('%Y-%m-%d %H:%M:%S', timeArray)}，{past_days}天前。")
+                timeArray = time.localtime(last_active_ts)
+                past_days = int((current_ts - last_active_ts) / 86400)
+                print(f"上次发动态时间：{time.strftime('%Y-%m-%d %H:%M:%S', timeArray)}，{past_days}天前。")
 
-            if past_days > config.INACTIVE_THRESHOLD:
-                print(f"超过设定天数（{config.INACTIVE_THRESHOLD}），执行取关操作")
-                will_delete = True
+                if past_days > config.INACTIVE_THRESHOLD:
+                    print(f"超过设定天数（{config.INACTIVE_THRESHOLD}），执行取关操作")
+                    will_delete = True
+        else:
+            # 通过投稿检测不活跃
+            last_active_ts = await handle_user.get_latest_post_time()
+            if last_active_ts is None and not will_delete:
+                if config.REMOVE_EMPTY_DYNAMIC:
+                    print(f"用户{iuser.name}({iuser.mid})没发过投稿，执行取关操作。")
+                    will_delete = True
+                else:
+                    print(f"用户{iuser.name}({iuser.mid})没发过投稿，已忽略。")
+                    continue
+            else:
+                timeArray = time.localtime(last_active_ts)
+                past_days = int((current_ts - last_active_ts) / 86400)
+                print(f"上次投稿时间：{time.strftime('%Y-%m-%d %H:%M:%S', timeArray)}，{past_days}天前。")
+
+                if past_days > config.INACTIVE_THRESHOLD:
+                    print(f"超过设定天数（{config.INACTIVE_THRESHOLD}），执行取关操作")
+                    will_delete = True
         
         if will_delete:
             try:
@@ -456,6 +576,7 @@ if __name__ == '__main__':
         start_ts = time.time()
         config = Config()
         sync(login())
+
         set_parameter()
         print("3s后开始执行取关脚本, CTRL+C终止程序：")
         for i in range(3, 0, -1):
@@ -464,8 +585,10 @@ if __name__ == '__main__':
         if config.AUTO_ADD_IGNORE :
             sync(is_in_special_group())
         followed_list = get_follow_list()
+
         print("开始处理...\n")
-        handle_follow_list(followed_list)
+        sync(handle_follow_list(followed_list))
+
     except KeyboardInterrupt as e:
         print("已手动终止程序。")
     except APIExpection as e:
