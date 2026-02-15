@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 import json
 import logging
@@ -31,7 +32,7 @@ class Config:
         "Referer": f"https://space.bilibili.com/{self.uid}/"
         }
 
-logging.basicConfig(filename='unfollow.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename='unfollow.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', encoding='utf-8')
 
 class APIExpection:
     """API异常"""
@@ -75,10 +76,8 @@ async def login() -> None:
     print("如以上内容为乱码，请手动打开目录中qr.jpg扫描")
 
     while not qr.has_done():                                            # 在完成扫描前轮询
-        status = await qr.check_state()
-        if (str(status) != "QrCodeLoginEvents.SCAN"):
-            print(status)
-        time.sleep(1)
+        print(await qr.check_state())                                   # 检查状态
+        await asyncio.sleep(1)
     cookies = qr.get_credential().get_cookies()
     config.set_user_cookies(cookies)
     with open(cookie_file, 'w', encoding='utf-8') as f:
@@ -306,48 +305,20 @@ class FollowedUser:
         self.name = uname
         FollowedUser.user_count += 1
 
-    def get_latest_dynamic(self, uid):
-        # TODO: 固定API链接，待切换至bilibili_api接口
-        api_url = "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space"
-        
+    async def get_latest_dynamic(self):
         try:
-            params = {
-                "host_mid": str(uid)
-            }
+            credential = user.Credential(sessdata=config.cookies["SESSDATA"], 
+                                        bili_jct=config.cookies["bili_jct"])
+            u = user.User(self.mid, credential=credential)
 
-            response = requests.get(
-                api_url,
-                params=params,
-                headers=config.headers,
-                cookies=config.cookies,
-                timeout=10
-            )
-            resp = response.json()
-
-            if resp["code"] != 0:
-                print(resp)
-                print(f"请求失败，错误代码：{resp['code']}，信息：{resp.get('message', '未知错误')}")
-                logging.error(f"请求失败，错误代码：{resp['code']}，信息：{resp.get('message', '未知错误')}")
-                if resp["code"] == -352:
-                    raise APIExpection("账号可能被风控限制，请稍后重试", -352)
-                return None
-
-            items = resp["data"]["items"]
-            if not items:
-                logging.info("该用户暂无动态")
-                return None
-            dynamic1 = items[0]["modules"]["module_author"]["pub_ts"]
-            if len(items) == 1:
-                publish_time = dynamic1
-            else:
-                dynamic2 = items[1]["modules"]["module_author"]["pub_ts"]
-                publish_time = dynamic1 if int(dynamic1) > int(dynamic2) else dynamic2
-            self.timestamp = publish_time
-            return publish_time
+            dynamics = await u.get_dynamics_new()
+            first_dynamic_ts = int(dynamics['items'][0]['modules']['module_author']['pub_ts'])
+            second_dynamic_ts = int(dynamics['items'][1]['modules']['module_author']['pub_ts'])
+            latest_dynamic = dynamics['items'][0] if first_dynamic_ts >= second_dynamic_ts else dynamics['items'][1]
+            return latest_dynamic
         except Exception as e:
-            print(f"请求异常：{str(e)}")
-            logging.error(f"请求异常：{str(e)}")
-        return None
+            logging.error(f"获取用户最新动态异常：{str(e)}")
+            return
     
     async def get_latest_video(self):
         """异步获取用户最新视频"""
@@ -489,95 +460,122 @@ def get_follow_list():
     logging.info(f"共获取到 {FollowedUser.user_count} 个关注用户")
     return followed_list
 
+
+async def get_last_active_ts(handle_user, detect_type):
+    """
+    获取用户最后活跃的时间戳
+    :return: timestamp (float) or None
+    """
+    if detect_type == 0:
+        # 动态检测
+        last_dynamic = await handle_user.get_latest_dynamic()
+
+        if last_dynamic and 'modules' in last_dynamic:
+            return last_dynamic['modules']['module_author']['pub_ts']
+    else:
+        # 投稿检测
+        return await handle_user.get_latest_post_time()
+    return None
+
+
+async def evaluate_user_status(iuser, handle_user, current_ts):
+    """
+    评估用户状态，决定是否取关
+    :return: (bool: should_delete, str: reason_message)
+    """
+    # 1. 白名单检查
+    if iuser.mid in config.ignore_list:
+        return False, f"用户{iuser.name}({iuser.mid})位于白名单，已忽略。"
+
+    # 2. 注销用户检查
+    if iuser.name == "账号已注销":
+        if config.REMOVE_DELETED_USER:
+            return True, f"用户{iuser.name}({iuser.mid})已注销，执行取关操作。"
+        return False, f"用户{iuser.name}({iuser.mid})已注销，配置设为保留。"
+
+    # 3. 获取活跃时间
+    last_active_ts = await get_last_active_ts(handle_user, config.DETECT_TYPE)
+
+    # 4. 无历史记录处理 (无动态/无投稿)
+    if last_active_ts is None:
+        type_str = "动态" if config.DETECT_TYPE == 0 else "投稿"
+        if config.REMOVE_EMPTY_DYNAMIC:
+            return True, f"用户{iuser.name}({iuser.mid})没发过{type_str}，执行取关操作。"
+        else:
+            return False, f"用户{iuser.name}({iuser.mid})没发过{type_str}，已忽略。"
+
+    # 5. 时间阈值计算
+    last_active_ts = int(last_active_ts)
+    time_array = time.localtime(last_active_ts)
+    time_str = time.strftime('%Y-%m-%d %H:%M:%S', time_array)
+    past_days = int((current_ts - last_active_ts) / 86400)
+    
+    status_msg = f"上次活跃时间：{time_str}，{past_days}天前。"
+    
+    if past_days > config.INACTIVE_THRESHOLD:
+        return True, f"{status_msg} 超过设定天数（{config.INACTIVE_THRESHOLD}），执行取关操作。"
+    
+    return False, f"{status_msg} 未超过设定天数，保留关注。"
+
+async def perform_unfollow(iuser):
+    """
+    执行取关并返回结果
+    :return: bool (success)
+    """
+    try:
+        message = await unfollow_user(iuser.mid, iuser.name) # 实际调用
+        # message = f"[测试]用户{iuser.name}({iuser.mid})已被取关" # 测试用桩代码
+        print(message)
+        logging.info(f"用户{iuser.name}({iuser.mid})已被取关")
+        return True
+    except Exception as e:
+        err_msg = f"取关 {iuser.name}（{iuser.mid}） 失败：{str(e)}"
+        print(err_msg)
+        logging.error(err_msg)
+        return False
+
 async def handle_follow_list(followed_list):
     current_ts = time.time()
-    unfollow_success_count = 0
-    unfollow_fail_count = 0
+    stats = {'success': 0, 'fail': 0}
 
     for i, iuser in enumerate(followed_list, 1):
-
-        handle_user = FollowedUser(iuser.mid, iuser.name)
-
-        # 跳过前SKIP_NUM个关注用户
+        # 1. 预处理：跳过逻辑
         if i <= config.SKIP_NUM:
-            print(f"跳过用户:{i}.\t 用户名：{iuser.name}\tUID：{iuser.mid}")
-            logging.info(f"跳过用户:{i}.\t 用户名：{iuser.name}\tUID：{iuser.mid}")
+            log_msg = f"跳过用户:{i}.\t 用户名：{iuser.name}\tUID：{iuser.mid}"
+            print(log_msg)
+            logging.info(log_msg)
             continue
 
-        # 开始处理当前用户
+        # 初始化 API 句柄
         print(f"{i:3d}. UID: {iuser.mid}\t用户名: {iuser.name}")
         logging.info(f"{i:3d}. UID: {iuser.mid}\t用户名: {iuser.name}")
-
-        if iuser.mid in config.ignore_list:
-            print(f"用户{iuser.name}({iuser.mid})位于白名单，已忽略。")
-            logging.info(f"用户{iuser.name}({iuser.mid})位于白名单，已忽略。")
-            continue
         
-        will_delete = False
+        handle_user = FollowedUser(iuser.mid, iuser.name)
 
-        if iuser.name == "账号已注销" and config.REMOVE_DELETED_USER and not will_delete:
-            print(f"用户{iuser.name}({iuser.mid})已注销，执行取关操作。")
-            logging.info(f"用户{iuser.name}({iuser.mid})已注销，执行取关操作。")
-            will_delete = True
-
-        if config.DETECT_TYPE == 0 and not will_delete:
-            # 通过动态检测不活跃
-            last_active_ts = iuser.get_latest_dynamic(iuser.mid)
-            if last_active_ts == -352:
-                print("触发风控，已停止程序，请查看日志！")
-                logging.error("风控！")
-                exit
-
-            if last_active_ts is None and not will_delete:
-                if config.REMOVE_EMPTY_DYNAMIC:
-                    print(f"用户{iuser.name}({iuser.mid})没发过动态，执行取关操作。")
-                    will_delete = True
-                else:
-                    print(f"用户{iuser.name}({iuser.mid})没发过动态，已忽略。")
-                    continue
-            else:
-                timeArray = time.localtime(last_active_ts)
-                past_days = int((current_ts - last_active_ts) / 86400)
-                print(f"上次发动态时间：{time.strftime('%Y-%m-%d %H:%M:%S', timeArray)}，{past_days}天前。")
-
-                if past_days > config.INACTIVE_THRESHOLD:
-                    print(f"超过设定天数（{config.INACTIVE_THRESHOLD}），执行取关操作")
-                    will_delete = True
-        else:
-            # 通过投稿检测不活跃
-            last_active_ts = await handle_user.get_latest_post_time()
-            if last_active_ts is None and not will_delete:
-                if config.REMOVE_EMPTY_DYNAMIC:
-                    print(f"用户{iuser.name}({iuser.mid})没发过投稿，执行取关操作。")
-                    will_delete = True
-                else:
-                    print(f"用户{iuser.name}({iuser.mid})没发过投稿，已忽略。")
-                    continue
-            else:
-                timeArray = time.localtime(last_active_ts)
-                past_days = int((current_ts - last_active_ts) / 86400)
-                print(f"上次投稿时间：{time.strftime('%Y-%m-%d %H:%M:%S', timeArray)}，{past_days}天前。")
-
-                if past_days > config.INACTIVE_THRESHOLD:
-                    print(f"超过设定天数（{config.INACTIVE_THRESHOLD}），执行取关操作")
-                    will_delete = True
+        # 2. 决策逻辑：判断是否取关
+        should_delete, reason = await evaluate_user_status(iuser, handle_user, current_ts)
         
-        if will_delete:
-            try:
-                message = sync(unfollow_user(iuser.mid, iuser.name))
-                # message = f"[测试]用户{iuser.name}({iuser.mid})已被取关"
-                print(message)
-                logging.info(f"用户{iuser.name}({iuser.mid})已被取关")
-                unfollow_success_count += 1
-            except Exception as e:
-                print(f"取关 {iuser.name}（{iuser.mid}） 失败：{str(e)}")
-                logging.error(f"取关 {iuser.name}（{iuser.mid}） 失败：{str(e)}")
-                unfollow_fail_count += 1
-    
-        time.sleep(random.randint(config.LAG_START,config.LAG_END))
+        # 打印决策原因（无论是忽略还是取关，原因都很重要）
+        print(reason)
+        if "已忽略" in reason or "保留" in reason:
+             logging.info(reason)
 
-    print(f"取关成功{unfollow_success_count}个，失败{unfollow_fail_count}个！")
-    logging.info(f"取关成功{unfollow_success_count}个，失败{unfollow_fail_count}个！")
+        # 3. 执行逻辑
+        if should_delete:
+            is_success = await perform_unfollow(iuser)
+            if is_success:
+                stats['success'] += 1
+            else:
+                stats['fail'] += 1
+        
+        # 4. 流控
+        time.sleep(random.randint(config.LAG_START, config.LAG_END))
+
+    # 总结
+    summary = f"取关成功{stats['success']}个，失败{stats['fail']}个！"
+    print(summary)
+    logging.info(summary)
+
 
 if __name__ == '__main__':
 
@@ -600,9 +598,6 @@ if __name__ == '__main__':
 
     except KeyboardInterrupt as e:
         print("已手动终止程序。")
-    except APIExpection as e:
-        print(f"程序调用API异常返回：{e.message}")
-        logging.error(e)
     except Exception as e:
         print("程序异常终止，请查看日志。")
         logging.error(e)
