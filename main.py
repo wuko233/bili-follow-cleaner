@@ -247,7 +247,13 @@ async def is_in_special_group():
         
         special_sn = 1
         friends_list = []
-        rel = await user.get_self_friends(credential)
+        try:
+            rel = await user.get_self_friends(credential)
+
+        except Exception as e:
+            print(f"获取互关用户失败：{str(e)}")
+            logging.error(f"获取互关用户失败：{str(e)}")
+            return
 
         rel_list = rel.get("list", [])
 
@@ -260,6 +266,8 @@ async def is_in_special_group():
                 friends_list.append(mid)
                 print(f"用户{uname}({mid})已互关，已自动添加至白名单。")
         special_list = []
+
+        time.sleep(random.randint(config.LAG_START,config.LAG_END))
 
         while 1:
             rel_list = await user.get_self_special_followings(credential, pn=special_sn)
@@ -274,6 +282,7 @@ async def is_in_special_group():
                     special_list.append(mid)
                     print(f"用户({mid})已特殊关注，已自动添加至白名单。")
             special_sn += 1
+            time.sleep(random.randint(config.LAG_START,config.LAG_END))
 
         unique_id = set()
         for u in friends_list + special_list:
