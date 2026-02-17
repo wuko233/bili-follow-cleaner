@@ -1,0 +1,7 @@
+streamlit
+bilibili-api-python
+requests
+pyinstaller
+curl_cffi
+httpx
+aiohttp
