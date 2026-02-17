@@ -2,3 +2,6 @@
 *.json
 release/
 qr.jpg
+*spec
+build/
+dist/
