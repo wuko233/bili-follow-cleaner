@@ -22,7 +22,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: "3.10" # 建议使用 3.10 或 3.9，兼容性较好
+        python-version: "3.12" 
 
     # 3. 安装依赖
     - name: Install dependencies
