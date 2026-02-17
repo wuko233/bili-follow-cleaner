@@ -5,6 +5,13 @@ import streamlit
 import sys
 from PyInstaller.utils.hooks import collect_all
 
+if sys.platform.startswith('win'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
 # === 配置 ===
 WEB_SCRIPT_NAME = "app.py"
 TERMINAL_SCRIPT_NAME = "main.py"
@@ -43,13 +50,11 @@ if __name__ == '__main__':
         f.write(code)
 
 # 定义通用的隐式导入，解决 bilibili_api 找不到请求库的问题
-# 这些库是 bilibili_api 底层依赖的，PyInstaller 经常漏掉
 COMMON_HIDDEN_IMPORTS = [
     '--hidden-import=bilibili_api',
     '--hidden-import=httpx',
     '--hidden-import=aiohttp',
     '--hidden-import=tqdm',
-    # 如果你安装了 curl_cffi，bilibili_api 会优先用它，必须强制收集
     '--collect-all=curl_cffi',
     '--collect-all=bilibili_api',
 ]
@@ -66,7 +71,6 @@ def build_terminal():
         '--distpath=dist',
     ]
     
-    # 加入通用依赖修复
     args.extend(COMMON_HIDDEN_IMPORTS)
     
     PyInstaller.__main__.run(args)
@@ -90,7 +94,7 @@ def build_webui():
         f'--name={WEB_EXE_NAME}',
         '--onefile',
         '--clean',
-        '--noconsole', # 如果调试可以改为 --console
+        '--noconsole',
         '--distpath=dist',
         f'--add-data={datas[0]}',
         f'--add-data={datas[1]}',
@@ -99,7 +103,6 @@ def build_webui():
         '--hidden-import=streamlit',
     ]
     
-    # 加入通用依赖修复
     args.extend(COMMON_HIDDEN_IMPORTS)
 
     PyInstaller.__main__.run(args)
@@ -116,17 +119,14 @@ if __name__ == "__main__":
         shutil.rmtree("dist")
 
     try:
-        # 1. 确保环境里至少安装了一个请求库
         import importlib.util
         if not (importlib.util.find_spec("httpx") or importlib.util.find_spec("aiohttp")):
-            print("⚠️ 警告: 检测到环境中未安装 httpx 或 aiohttp。")
-            print("请先运行: pip install httpx aiohttp")
-            # 不退出，尝试继续
+            print("Warning: httpx or aiohttp not found.")
         
         build_terminal()
         print("-" * 30)
         build_webui()
         print("-" * 30)
-        print("✅ 构建全部完成！")
+        print("Build Finished Successfully!")
     except Exception as e:
-        print(f"❌ 构建失败: {e}")
+        print(f"Build Failed: {e}")
