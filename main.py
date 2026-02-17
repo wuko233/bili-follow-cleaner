@@ -34,7 +34,7 @@ class Config:
 
 logging.basicConfig(filename='unfollow.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', encoding='utf-8')
 
-class APIExpection:
+class APIException:
     """API异常"""
     def __init__(self, message, status_code):
         self.message = message
@@ -266,7 +266,7 @@ async def is_in_special_group():
                 print(f"用户{uname}({mid})已互关，已自动添加至白名单。")
         special_list = []
 
-        time.sleep(random.randint(config.LAG_START,config.LAG_END))
+        await asyncio.sleep(random.randint(config.LAG_START,config.LAG_END))
 
         while 1:
             rel_list = await user.get_self_special_followings(credential, pn=special_sn)
@@ -281,7 +281,7 @@ async def is_in_special_group():
                     special_list.append(mid)
                     print(f"用户({mid})已特殊关注，已自动添加至白名单。")
             special_sn += 1
-            time.sleep(random.randint(config.LAG_START,config.LAG_END))
+            await asyncio.sleep(random.randint(config.LAG_START,config.LAG_END))
 
         unique_id = set()
         for u in friends_list + special_list:
@@ -312,9 +312,16 @@ class FollowedUser:
             u = user.User(self.mid, credential=credential)
 
             dynamics = await u.get_dynamics_new()
-            first_dynamic_ts = int(dynamics['items'][0]['modules']['module_author']['pub_ts'])
-            second_dynamic_ts = int(dynamics['items'][1]['modules']['module_author']['pub_ts'])
-            latest_dynamic = dynamics['items'][0] if first_dynamic_ts >= second_dynamic_ts else dynamics['items'][1]
+            items = dynamics.get('items', [])
+            
+            if not items:
+                return
+            if len(items) == 1:
+                return items[0]
+
+            first_dynamic_ts = int(items[0]['modules']['module_author']['pub_ts'])
+            second_dynamic_ts = int(items[1]['modules']['module_author']['pub_ts'])
+            latest_dynamic = items[0] if first_dynamic_ts >= second_dynamic_ts else items[1]
             return latest_dynamic
         except Exception as e:
             logging.error(f"获取用户最新动态异常：{str(e)}")
@@ -558,7 +565,7 @@ async def handle_follow_list(followed_list):
         # 打印决策原因（无论是忽略还是取关，原因都很重要）
         print(reason)
         if "已忽略" in reason or "保留" in reason:
-             logging.info(reason)
+            logging.info(reason)
 
         # 3. 执行逻辑
         if should_delete:
@@ -569,7 +576,7 @@ async def handle_follow_list(followed_list):
                 stats['fail'] += 1
         
         # 4. 流控
-        time.sleep(random.randint(config.LAG_START, config.LAG_END))
+        await asyncio.sleep(random.randint(config.LAG_START, config.LAG_END))
 
     # 总结
     summary = f"取关成功{stats['success']}个，失败{stats['fail']}个！"
@@ -600,6 +607,9 @@ if __name__ == '__main__':
         print("已手动终止程序。")
     except Exception as e:
         print("程序异常终止，请查看日志。")
+        logging.error(e)
+    except APIException as e:
+        print(f"程序调用API异常返回：{e.message}")
         logging.error(e)
     used_time = timedelta(seconds=time.time()-start_ts)
     print(f"总耗时：{used_time}")
